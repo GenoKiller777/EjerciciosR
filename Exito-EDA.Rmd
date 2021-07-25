@@ -1,0 +1,648 @@
+---
+title: "1 parte - EDA"
+author: "Darwin Pérez"
+date: "04-02-2021"
+output: pdf_document
+---
+
+```{r}
+options(scipen=999)#Desactiva la notacion cientifica
+```
+
+
+```{r Carga de Paquetes, warning=FALSE,message=FALSE}
+library(tidyverse)
+library(randomForest)
+library(randomForestExplainer)
+library(GGally)
+library(Amelia)
+library(dplyr)
+library(skimr)
+library(lubridate)
+library(tidyr)
+library(ggplot2)
+library(ggcorrplot)
+library(car)
+library(pROC)
+library(descr)
+library(caret)
+```
+
+```{r Limpiar Environment, warning=FALSE, message=FALSE}
+rm(list=ls()) ## Limpiar el Environment
+```
+
+```{r Cargar datos, warning=FALSE, message=FALSE}
+datos <- read.csv('base_eda.csv')
+```
+
+```{r Resumen del set de datos}
+glimpse(datos)
+```
+
+```{r Codificación del Vector de Respuesta}
+datos$RecReal <- if_else(datos$RecReal == 1, "Yes", "No")
+datos$RecReal <- as.factor(datos$RecReal)
+```
+
+
+# Muchos de los cálculos y representaciones que se realizan a lo largo de este capítulo se consiguen de forma más rápida si los datos están almacenados siguiendo la estructura: observación, variable, valor. 
+
+```{r}
+datos_long <- datos %>% gather(key = "Variable", value = "Valor", -IDTurno)
+tail(datos_long)
+```
+```{r Número de observaciones del set de datos}
+nrow(datos)
+```
+
+```{r Detección si hay alguna fila incompleta}
+any(!complete.cases(datos))
+```
+
+# Una vez detectado que existen valores ausentes, se estudia la distribución de los mismos.
+
+```{r Número de datos ausentes por variable}
+map_dbl(datos, .f = function(x){sum(is.na(x))})
+```
+
+```{r Identificador de valores que contenga las variables}
+
+datos %>% map_lgl(.f = function(x){any(!is.na(x) & x == 0)})
+```
+
+
+```{r Representación gráfica de los datos ausentes}
+datos_long <- datos_long %>%  mutate(Ausente = is.na(Valor))
+ggplot(data = datos_long, aes(x = Variable, y = IDTurno, fill = Ausente)) +
+  geom_raster() +
+  scale_fill_manual(values = c("gray60", "orangered2")) +
+  theme_bw() +
+  labs(title = "Valores ausentes por variable.") +
+  theme(legend.position = "bottom")
+```
+```{r Porcentaje valores ausentes por variable,message=FALSE}
+datos_long %>%
+  group_by(Variable) %>% 
+  summarize(porcentaje_NA = 100 * sum(is.na(Valor)) / length(Valor)) %>%
+  ggplot(aes(x = reorder(Variable, desc(porcentaje_NA)), y = porcentaje_NA)) +
+    geom_col() +
+    labs(title = "Porcentaje valores ausentes por variable",
+         x = "Variable", y = "Porcentaje NAs") +
+    theme_bw()
+```
+# Distribución de variables respuesta.
+
+```{r}
+ggplot(data = na.omit(datos), aes(x = RecReal,y= ..count.., fill = RecReal))+
+  geom_bar() +
+  scale_fill_manual(values = c("gray50", "orangered2")) +
+  labs(title = "Recuperación Real.") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+```{r Tabla de frecuencias}
+table(datos$RecReal)
+```
+```{r}
+prop.table(table(datos$RecReal)) %>% round(digits = 2)
+```
+
+################
+################
+
+# Distribución de variables continuas
+
+```{r}
+library(ggpubr)
+p1 <- ggplot(data = na.omit(datos), aes(x = leycutalimmin, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "orangered2")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "orangered2")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = leycutalimmin, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "orangered2")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Cobre Total", size = 15))
+final_plot
+```
+```{r Estadísticos del Cobre Total de las Recuperaciones Exitosas y no Exitosas}
+na.omit(datos) %>% filter(!is.na(leycutalimmin)) %>% group_by(RecReal) %>%
+          summarise(media = mean(leycutalimmin),
+                    mediana = median(leycutalimmin),
+                    min = min(leycutalimmin),
+                    max = max(leycutalimmin))
+```
+
+```{r}
+library(ggpubr)
+p1 <- ggplot(data = na.omit(datos), aes(x = k, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("chartreuse","gray50")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("chartreuse","gray50")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = k, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("chartreuse","gray50")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Índice de Solubilidad.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del K de las Recuperaciones Exitosas y no Exitosas}
+na.omit(datos) %>% filter(!is.na(k)) %>% group_by(RecReal) %>%
+          summarise(media = mean(k),
+                    mediana = median(k),
+                    min = min(k),
+                    max = max(k))
+```
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Bornita, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "cornflowerblue")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "cornflowerblue")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Bornita, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "cornflowerblue")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Bornita.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Bornita de las Recuperaciones Exitosas y no Exitosas}
+na.omit(datos) %>% filter(!is.na(Bornita)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Bornita),
+                    mediana = median(Bornita),
+                    min = min(Bornita),
+                    max = max(Bornita))
+```
+
+# Calcopirita
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Calcopirita, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "gold")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "gold")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Calcopirita, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "gold")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Calcopirita.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Calcopirita de las Recuperaciones Exitosas y no Exitosas ,message=FALSE}
+na.omit(datos) %>% filter(!is.na(Calcopirita)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Calcopirita),
+                    mediana = median(Calcopirita),
+                    min = min(Calcopirita),
+                    max = max(Calcopirita))
+```
+
+# Calcosina
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Calcosin, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "snow3")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "snow3")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Calcosin, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "snow3")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Calcosina.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Calcosina de las Recuperaciones Exitosas y no Exitosas ,message=FALSE}
+na.omit(datos) %>% filter(!is.na(Calcosin)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Calcosin),
+                    mediana = median(Calcosin),
+                    min = min(Calcosin),
+                    max = max(Calcosin))
+```
+
+# Pirita
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Pirita, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "yellow")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "yellow")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Pirita, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "yellow")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Pirita.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Pirita de las Recuperaciones Exitosas y no Exitosas ,message=FALSE}
+na.omit(datos) %>% filter(!is.na(Pirita)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Pirita),
+                    mediana = median(Pirita),
+                    min = min(Pirita),
+                    max = max(Pirita))
+```
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = log(Pirita), fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "orangered2")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "orangered2")) +
+      theme_bw()
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = log(Pirita), color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "orangered2")) +
+      theme_bw()
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Log(ph_columna)", size =15))
+final_plot
+```
+
+# Plata.
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Ag, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "gray81")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "gray81")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Ag, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "gray81")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Plata.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Plata de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(Ag)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Ag),
+                    mediana = median(Ag),
+                    min = min(Ag),
+                    max = max(Ag))
+```
+
+# Hierro.
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Fe, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "firebrick")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "firebrick")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Fe, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "firebrick")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Hierro.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Hierro de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(Fe)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Fe),
+                    mediana = median(Fe),
+                    min = min(Fe),
+                    max = max(Fe))
+```
+
+
+```{r}
+
+p1 <- ggplot(data = na.omit(datos), aes(x = S, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = S, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Azufre.", size = 15))
+final_plot
+```
+
+
+
+```{r Estadísticos del Azufre de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(S)) %>% group_by(RecReal) %>%
+          summarise(media = mean(S),
+                    mediana = median(S),
+                    min = min(S),
+                    max = max(S))
+```
+
+# RVREC
+
+```{r}
+
+p1 <- ggplot(data = na.omit(datos), aes(x = RVREC, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = RVREC, color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Real Vaciado.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del RVRec de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(RVREC)) %>% group_by(RecReal) %>%
+          summarise(media = mean(RVREC),
+                    mediana = median(RVREC),
+                    min = min(RVREC),
+                    max = max(RVREC))
+```
+
+# d80Min 
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = d80Min, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = d80Min , color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("D80 Min ", size = 15))
+final_plot
+```
+```{r Estadísticos del D80Min de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(d80Min)) %>% group_by(RecReal) %>%
+          summarise(media = mean(d80Min),
+                    mediana = median(d80Min),
+                    min = min(d80Min),
+                    max = max(d80Min))
+```
+
+# Solidos
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Solidos, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Solidos , color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Porcentaje Solidos.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Solidos de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(Solidos)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Solidos),
+                    mediana = median(Solidos),
+                    min = min(Solidos),
+                    max = max(Solidos))
+```
+
+# Colector     
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Colector, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Colector , color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Colector.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Colector de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(Colector)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Colector),
+                    mediana = median(Colector),
+                    min = min(Colector),
+                    max = max(Colector))
+```
+
+# Espumante 
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = Espumante, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = Espumante , color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Espumante.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Espumante de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(Espumante)) %>% group_by(RecReal) %>%
+          summarise(media = mean(Espumante),
+                    mediana = median(Espumante),
+                    min = min(Espumante),
+                    max = max(Espumante))
+```
+# ph_prerougher
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = ph_prerougher, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = ph_prerougher , color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("ph_prerougher.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Prerougher de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(ph_prerougher)) %>% group_by(RecReal) %>%
+          summarise(media = mean(ph_prerougher),
+                    mediana = median(ph_prerougher),
+                    min = min(ph_prerougher),
+                    max = max(ph_prerougher))
+```
+
+# ph_columna        
+
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = ph_columna, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = ph_columna , color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("ph_columna.", size = 15))
+final_plot
+```
+
+```{r Estadísticos del Columna de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(ph_columna)) %>% group_by(RecReal) %>%
+          summarise(media = mean(ph_columna),
+                    mediana = median(ph_columna),
+                    min = min(ph_columna),
+                    max = max(ph_columna))
+```
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = log(ph_columna), fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "orangered2")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "orangered2")) +
+      theme_bw()
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = log(ph_columna), color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "orangered2")) +
+      theme_bw()
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Log(ph_columna)", size =15))
+final_plot
+```
+
+# tphFlot
+```{r}
+p1 <- ggplot(data = na.omit(datos), aes(x = tphFlot, fill = RecReal)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c("gray50", "khaki1")) +
+      geom_rug(aes(color = RecReal), alpha = 0.5) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+      
+p2 <- ggplot(data = na.omit(datos), aes(x = RecReal, y = tphFlot , color = RecReal)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(alpha = 0.3, width = 0.15) +
+      scale_color_manual(values = c("gray50", "khaki1")) +
+      theme_bw()
+
+final_plot <- ggarrange(p1, p2, legend = "top")
+final_plot <- annotate_figure(final_plot, top = text_grob("Toneladas por Hora Flotación.",
+                                                          size = 15))
+final_plot
+```
+
+```{r Estadísticos del Flot de las Recuperaciones Exitosas y no Exitosas,message=FALSE}
+na.omit(datos) %>% filter(!is.na(tphFlot)) %>% group_by(RecReal) %>%
+          summarise(media = mean(tphFlot),
+                    mediana = median(tphFlot),
+                    min = min(tphFlot),
+                    max = max(tphFlot))
+```
+
+# Correlación entre variables continuas
+
+```{r}
+cor.test(x = na.omit(datos$Colector), y = na.omit(datos$Espumante, method = "pearson"))
+```
+
+```{r}
+ggplot(data = na.omit(datos), aes(x = Colector, y = log(Espumante))) +
+  geom_point(color = "gray30") +
+  geom_smooth(color = "firebrick") +
+  theme_bw()
+```
+
